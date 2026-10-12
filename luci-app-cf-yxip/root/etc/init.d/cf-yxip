@@ -1,0 +1,29 @@
+#!/bin/sh /etc/rc.common
+# cf-yxip 常驻服务：优选 Cloudflare IP，LuCI 面板 + 定时扫描 + 自动下发
+START=95
+STOP=10
+USE_PROCD=1
+NAME=cf-yxip
+PROG=/usr/bin/cf-yxipd
+CONFDIR=/etc/cf-yxip
+CONF=$CONFDIR/config.json
+
+start_service() {
+	mkdir -p "$CONFDIR"
+	local enabled=$(uci -q get cf-yxip.main.enabled)
+	[ "$enabled" = "0" ] && return 0
+	local listen=$(uci -q get cf-yxip.main.listen)
+	procd_open_instance
+	procd_set_param command "$PROG" serve -c "$CONF" -d "$CONFDIR" ${listen:+-listen "$listen"}
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_set_param limits nofile="4096 4096"
+	procd_close_instance
+}
+
+reload_service() { stop; start; }
+
+service_triggers() {
+	procd_add_reload_trigger cf-yxip
+}

@@ -1,0 +1,32 @@
+#!/bin/sh
+# cf-yxip 后端 CLI：LuCI 前端通过 fs.exec 调用，转发到本机 cf-yxipd 的 HTTP API。
+# 用法: cf-yxip <status|version|config [json]|scan [json]|stop|results [n]|logs|history [file]|export <fmt> [n]|apply [name]|probe|health|svc <start|stop|restart|enable|disable>>
+API="http://127.0.0.1:7790"
+TIMEOUT=120
+C=/usr/bin/curl
+
+get()  { $C -s --max-time "$TIMEOUT" "$API$1"; }
+post() { $C -s --max-time "$TIMEOUT" -X POST -H 'Content-Type: application/json' -d "${2:-{}}" "$API$1"; }
+down() { printf '{"ok":false,"error":"cf-yxipd 未运行：请在本页「系统设置」里启动服务，或点上面的启动按钮。"}\n'; }
+
+alive() { $C -s --max-time 3 -o /dev/null "$API/healthz"; }
+
+cmd="${1:-status}"; shift 2>/dev/null
+
+case "$cmd" in
+  health|healthz) get /healthz ;;
+  version)  alive && get /api/version || down ;;
+  status)   alive && get /api/status  || down ;;
+  config)
+    if [ -n "$1" ]; then post /api/config "$1"; else alive && get /api/config || down; fi ;;
+  scan)     alive && post /api/scan "${1:-{}}" || down ;;
+  stop)     alive && post /api/scan/stop '{}' || down ;;
+  results)  alive && get "/api/results?limit=${1:-100}" || down ;;
+  logs)     alive && get /api/logs || down ;;
+  history)  if [ -n "$1" ]; then alive && get "/api/history?file=$1" || down; else alive && get /api/history || down; fi ;;
+  export)   alive && get "/api/export?format=${1:-csv}&topn=${2:-10}" || down ;;
+  apply)    alive && post /api/apply "{\"name\":\"${1:-}\"}" || down ;;
+  probe)    alive && post /api/probe "${1:-{}}" || down ;;
+  svc)      /etc/init.d/cf-yxip "$1" >/dev/null 2>&1; echo "{\"ok\":true,\"service\":\"$1\"}" ;;
+  *) printf '{"ok":false,"error":"未知子命令: %s"}\n' "$cmd" ;;
+esac

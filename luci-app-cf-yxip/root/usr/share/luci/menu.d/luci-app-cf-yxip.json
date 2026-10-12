@@ -1,0 +1,1 @@
+{"admin/services/cf-yxip":{"action":{"path":"cf-yxip","type":"view"},"depends":{"acl":["luci-app-cf-yxip"]},"order":62,"title":"CF 优选IP"}}

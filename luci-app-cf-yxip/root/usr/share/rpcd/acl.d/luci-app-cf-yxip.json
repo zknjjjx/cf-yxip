@@ -1,0 +1,19 @@
+{
+	"luci-app-cf-yxip": {
+		"description": "Cloudflare 优选 IP：扫描、结果下发、定时任务",
+		"read": {
+			"uci": ["cf-yxip"],
+			"file": {
+				"/usr/libexec/cf-yxip": ["exec"],
+				"/usr/libexec/cf-yxip *": ["exec"]
+			}
+		},
+		"write": {
+			"uci": ["cf-yxip"],
+			"file": {
+				"/usr/libexec/cf-yxip": ["exec"],
+				"/usr/libexec/cf-yxip *": ["exec"]
+			}
+		}
+	}
+}

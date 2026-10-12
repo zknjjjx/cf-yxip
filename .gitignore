@@ -1,0 +1,4 @@
+dist/
+luci-app-cf-yxip/root/usr/bin/cf-yxipd
+*.tgz
+*.tar.gz
