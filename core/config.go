@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	Version           = "0.1.0"
+	Version           = "0.3.0"
 	DefaultConfigPath = "/etc/cf-yxip/config.json"
 	DefaultStateDir   = "/etc/cf-yxip"
 )
@@ -25,6 +25,21 @@ type ApplyTarget struct {
 	Path    string `json:"path,omitempty"`    // dnsmasq/hosts 写入路径
 	Restart string `json:"restart,omitempty"` // 下发后重启的服务
 	TopN    int    `json:"topn,omitempty"`    // 使用前 N 个结果，0 表示用全局 TopN
+	Repo    string `json:"repo,omitempty"`    // github：仓库 owner/name
+	Branch  string `json:"branch,omitempty"`  // github：分支，默认 main
+	Format  string `json:"format,omitempty"`  // github：导出格式，默认 cfnew（IP:端口#名称）
+	Token   string `json:"token,omitempty"`   // github：令牌，留空读环境变量 GH_TOKEN
+	Replace bool   `json:"replace,omitempty"` // cfnew：先清空旧列表再写入
+	Reload  string `json:"reload,omitempty"`  // 重载方式：auto|signal|reload|restart
+	// HealthCheck 下发后做 DNS 自检，失败自动回滚。指针类型是为了区分
+	// “老配置里没写这个字段”（默认开启）和“用户明确关掉了”。
+	HealthCheck *bool `json:"health_check,omitempty"`
+}
+
+// WantHealthCheck 返回该目标是否要下发后自检。老配置里没有这个字段时默认开启
+// （指针对 nil），只有用户明确取消勾选才会是 false。
+func (t ApplyTarget) WantHealthCheck() bool {
+	return t.HealthCheck == nil || *t.HealthCheck
 }
 
 type Config struct {
@@ -38,6 +53,9 @@ type Config struct {
 	TimeoutMS     int           `json:"timeout_ms"`
 	Probes        int           `json:"probes"`
 	MaxLatencyMS  int           `json:"max_latency_ms"`
+	MinLatencyMS  int           `json:"min_latency_ms"` // 延迟下限，低于即丢弃，0=不限
+	MinSpeedMbps  float64       `json:"min_speed_mbps"` // 速度下限，低于即丢弃，0=不限
+	MaxLossPct    float64       `json:"max_loss_pct"`   // 丢包上限，高于即丢弃，0=不限
 	TopK          int           `json:"topk"`
 	Mode          string        `json:"mode"` // tcp | full
 	SNI           string        `json:"sni"`
@@ -52,6 +70,8 @@ type Config struct {
 	SnapshotKeep  int           `json:"snapshot_keep"`
 	AutoApply     bool          `json:"auto_apply"`
 	NotifyWebhook string        `json:"notify_webhook"`
+	CheckRetries  int           `json:"check_retries"` // 自检重试次数（每次间隔 2s）
+	CheckServer   string        `json:"check_server"`  // 自检用的 DNS 服务器，默认 127.0.0.1
 	ApplyTargets  []ApplyTarget `json:"apply_targets"`
 }
 
@@ -79,6 +99,8 @@ func DefaultConfig() Config {
 		Schedule:      "",
 		SnapshotKeep:  30,
 		AutoApply:     false,
+		CheckRetries:  3,
+		CheckServer:   "127.0.0.1",
 		ApplyTargets:  []ApplyTarget{},
 	}
 }
@@ -118,6 +140,15 @@ func (c *Config) Normalize() {
 	if c.MaxLatencyMS < 10 || c.MaxLatencyMS > 60000 {
 		c.MaxLatencyMS = d.MaxLatencyMS
 	}
+	if c.MinLatencyMS < 0 || c.MinLatencyMS > 60000 {
+		c.MinLatencyMS = 0
+	}
+	if c.MinSpeedMbps < 0 || c.MinSpeedMbps > 10000 {
+		c.MinSpeedMbps = 0
+	}
+	if c.MaxLossPct < 0 || c.MaxLossPct > 100 {
+		c.MaxLossPct = 0
+	}
 	if c.TopK < 1 || c.TopK > 5000 {
 		c.TopK = d.TopK
 	}
@@ -141,6 +172,23 @@ func (c *Config) Normalize() {
 	}
 	if c.SnapshotKeep < 1 || c.SnapshotKeep > 1000 {
 		c.SnapshotKeep = d.SnapshotKeep
+	}
+	if c.CheckRetries < 1 || c.CheckRetries > 10 {
+		c.CheckRetries = d.CheckRetries
+	}
+	if c.CheckServer == "" {
+		c.CheckServer = d.CheckServer
+	}
+	for i := range c.ApplyTargets {
+		switch c.ApplyTargets[i].Reload {
+		case "", "auto", "signal", "reload", "restart":
+		default:
+			c.ApplyTargets[i].Reload = "auto"
+		}
+		if c.ApplyTargets[i].HealthCheck == nil {
+			def := true
+			c.ApplyTargets[i].HealthCheck = &def
+		}
 	}
 	if c.WeightSpeed < 0 {
 		c.WeightSpeed = d.WeightSpeed
@@ -174,8 +222,22 @@ func NewConfigManager(path string) *ConfigManager {
 		}
 	}
 	cm.cfg.Normalize()
+	SetCheckOptions(cm.cfg.CheckRetries, cm.cfg.CheckServer)
 	return cm
 }
+
+// SetCheckOptions 记录当前自检参数，供 apply.go 使用。
+func SetCheckOptions(retries int, server string) {
+	if retries <= 0 {
+		retries = 3
+	}
+	if server == "" {
+		server = "127.0.0.1"
+	}
+	curRetries, curServer = retries, server
+}
+
+var curRetries, curServer = 3, "127.0.0.1"
 
 func (cm *ConfigManager) Get() Config {
 	cm.mu.RLock()
@@ -188,6 +250,7 @@ func (cm *ConfigManager) Set(c Config) error {
 	cm.mu.Lock()
 	cm.cfg = c
 	cm.mu.Unlock()
+	SetCheckOptions(c.CheckRetries, c.CheckServer)
 	return cm.Save()
 }
 

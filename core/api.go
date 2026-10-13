@@ -203,6 +203,7 @@ func (s *Server) handler() http.Handler {
 		json.NewDecoder(r.Body).Decode(&req)
 		cfg := s.cm.Get()
 		var msgs []string
+		var details []ApplyResult
 		applied := false
 		for _, t := range cfg.ApplyTargets {
 			if req.Name != "" && t.Name != req.Name {
@@ -212,19 +213,29 @@ func (s *Server) handler() http.Handler {
 				continue
 			}
 			applied = true
-			if err := ApplyTo(t, snap.Results, cfg.TopN); err != nil {
+			r, err := ApplyToTarget(t, snap.Results, cfg.TopN)
+			details = append(details, r)
+			if err != nil {
 				go s.eng.logf("下发 [%s] 失败: %v", t.Name, err)
 				writeErr(w, 500, fmt.Sprintf("[%s] %v", t.Name, err))
 				return
 			}
-			msgs = append(msgs, t.Name+" 已更新")
-			go s.eng.logf("下发 [%s] 成功（域名 %s，Top%d）", t.Name, t.Domain, cfg.TopN)
+			if r.Checked && r.OK {
+				msgs = append(msgs, fmt.Sprintf("%s 已更新并通过自检（%s）", t.Name, r.Message))
+			} else {
+				msgs = append(msgs, t.Name+" 已更新")
+			}
+			extra := ""
+			if r.Reload.Message != "" {
+				extra = "，" + r.Reload.Message
+			}
+			go s.eng.logf("下发 [%s] 成功（域名 %s，Top%d%s）", t.Name, t.Domain, cfg.TopN, extra)
 		}
 		if !applied {
 			writeErr(w, 400, "没有启用的下发目标")
 			return
 		}
-		ok(w, map[string]any{"messages": msgs})
+		ok(w, map[string]any{"messages": msgs, "results": details})
 	})
 
 	mux.HandleFunc("/api/probe", func(w http.ResponseWriter, r *http.Request) {
@@ -272,6 +283,53 @@ func (s *Server) handler() http.Handler {
 			res.TTFBMS = float64(ttfb.Microseconds()) / 1000
 		}
 		ok(w, map[string]any{"result": res})
+	})
+
+	// /api/check 对已启用目标做一次「当前是否解析到优选 IP」的自检。
+	mux.HandleFunc("/api/check", func(w http.ResponseWriter, r *http.Request) {
+		cfg := s.cm.Get()
+		snap := s.eng.Latest()
+		var want []string
+		if snap != nil {
+			n := cfg.TopN
+			if n > len(snap.Results) {
+				n = len(snap.Results)
+			}
+			for _, x := range snap.Results[:n] {
+				want = append(want, x.IP)
+			}
+		}
+		type item struct {
+			Name     string   `json:"name"`
+			Type     string   `json:"type"`
+			Domain   string   `json:"domain"`
+			OK       bool     `json:"ok"`
+			Resolved []string `json:"resolved"`
+			Message  string   `json:"message"`
+		}
+		var out []item
+		for _, t := range cfg.ApplyTargets {
+			if !t.Enabled {
+				continue
+			}
+			if t.Domain == "" {
+				out = append(out, item{Name: t.Name, Type: t.Type, OK: false, Message: "未配置域名"})
+				continue
+			}
+			if len(want) == 0 {
+				out = append(out, item{Name: t.Name, Type: t.Type, Domain: t.Domain, OK: false, Message: "还没有扫描结果，无法比对"})
+				continue
+			}
+			okv, got, msg := VerifyDomain(t.Domain, want, cfg.CheckServer)
+			it := item{Name: t.Name, Type: t.Type, Domain: t.Domain, OK: okv, Resolved: got}
+			if okv {
+				it.Message = "解析到优选 IP"
+			} else {
+				it.Message = msg
+			}
+			out = append(out, it)
+		}
+		ok(w, map[string]any{"checks": out, "expect": want, "server": cfg.CheckServer})
 	})
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

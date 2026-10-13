@@ -97,6 +97,9 @@ var CFG_FIELDS = [
 	['timeout_ms', '单次超时（毫秒）', 'int', ''],
 	['probes', '每个 IP 探测次数', 'int', ''],
 	['max_latency_ms', '延迟上限（毫秒）', 'int', '超过此值的结果丢弃'],
+	['min_latency_ms', '延迟下限（毫秒）', 'int', '低于此值的结果丢弃，0 = 不限'],
+	['min_speed_mbps', '速度下限（Mbps）', 'float', '低于此值的结果丢弃，0 = 不限；tcp 模式没有测速数据，此项不参与判断'],
+	['max_loss_pct', '丢包上限（%）', 'float', '高于此值的结果丢弃，0 = 不限'],
 	['topk', '进入测速的 IP 数', 'int', ''],
 	['topn', '默认输出条数', 'int', ''],
 	['test_host', '测速/取 Colo 域名', 'text', '默认 speed.cloudflare.com'],
@@ -287,7 +290,7 @@ return view.extend({
 		return run(['results', String(limit)]).then(function (res) {
 			if (res.ok === false) throw new Error(res.error);
 			self.content.innerHTML = '';
-			var fmtSel = sel([['text', 'text：纯 IP'], ['addr', 'addr：IP:端口'], ['cdn', 'cdn：IP:端口#延迟'], ['csv', 'csv：表格'], ['json', 'json'], ['ipset', 'ipset'], ['hosts', 'hosts']], self.exportFmt || 'csv');
+			var fmtSel = sel([['text', 'text：纯 IP'], ['addr', 'addr：IP:端口'], ['cfnew', 'cfnew：IP:端口#机房-延迟'], ['cdn', 'cdn：IP:端口#延迟'], ['csv', 'csv：表格'], ['json', 'json'], ['ipset', 'ipset'], ['hosts', 'hosts']], self.exportFmt || 'csv');
 			var nIn = numIn(self.exportN || ((res.results || []).length || 10), 1);
 			var limSel = sel([[10, '10 条'], [20, '20 条'], [50, '50 条'], [100, '100 条'], [200, '200 条']], limit);
 			limSel.addEventListener('change', function () { self.resLimit = parseInt(limSel.value, 10); self.show('results'); });
@@ -303,14 +306,43 @@ return view.extend({
 				outBox
 			], btn('刷新', 'cbi-button-neutral', function () { self.show('results'); })));
 
+			var f = self.resFilter || {};
+			var numPh = function (v, step, ph) { return E('input', { 'type': 'number', 'step': String(step), 'placeholder': ph, 'value': (v === undefined || v === null) ? '' : v }); };
+			var latIn = numPh(f.maxLat, 1, '不限');
+			var spdIn = numPh(f.minSpd, 0.1, '不限');
+			var lossIn = numPh(f.maxLoss, 1, '不限');
+			var tblBox = E('div');
+			var cnt = E('span', { 'class': 'cyx-hint' });
+			var redraw = function () {
+				var all = res.results || [];
+				var maxLat = parseFloat(latIn.value), minSpd = parseFloat(spdIn.value), maxLoss = parseFloat(lossIn.value);
+				self.resFilter = { maxLat: latIn.value, minSpd: spdIn.value, maxLoss: lossIn.value };
+				var rs = all.filter(function (r) {
+					if (!isNaN(maxLat) && (r.avg_ms || 0) > maxLat) return false;
+					if (!isNaN(minSpd) && (r.speed_mbps || 0) < minSpd) return false;
+					if (!isNaN(maxLoss) && (r.loss_pct || 0) > maxLoss) return false;
+					return true;
+				});
+				tblBox.innerHTML = '';
+				tblBox.appendChild(self.resultTable(rs, limit));
+				cnt.textContent = '筛选后 ' + rs.length + ' / ' + all.length + ' 个';
+			};
+			[latIn, spdIn, lossIn].forEach(function (el) { el.addEventListener('input', redraw); });
+			redraw();
 			self.content.appendChild(card('扫描结果', [
 				kv([
 					['快照时间', res.time || '-'],
 					['可用 IP', (res.results || []).length + ' 个'],
 					['本次用时', ((res.duration_ms || 0) / 1000).toFixed(1) + ' s']
 				]),
-				E('div', { 'class': 'cyx-ops' }, [E('span', {}, '显示'), limSel]),
-				self.resultTable(res.results || [], limit)
+				E('div', { 'class': 'cyx-ops' }, [
+					E('span', {}, '显示'), limSel,
+					E('span', {}, '延迟 ≤'), latIn,
+					E('span', {}, '速度 ≥'), spdIn,
+					E('span', {}, '丢包 ≤'), lossIn,
+					E('span', {}, '%'), cnt
+				]),
+				tblBox
 			]));
 		});
 	},
@@ -349,11 +381,11 @@ return view.extend({
 			targets.forEach(function (t) { box.appendChild(self.targetEditor(t)); });
 			if (!targets.length) box.appendChild(E('div', { 'class': 'cyx-hint' }, '还没有下发目标，点下面「添加目标」。'));
 			self.content.appendChild(card('下发目标', [
-				E('div', { 'class': 'cyx-hint' }, '扫描出的 Top N IP 会写进这些位置。dnsmasq 写成 address=/域名/IP 轮询应答；AdGuard Home 通过 API 改写 DNS；hosts 写文件。'),
+				E('div', { 'class': 'cyx-hint' }, '扫描出的 Top N IP 会写进这些位置。dnsmasq 写成 address=/域名/IP 轮询应答；AdGuard Home 通过 API 改写 DNS；hosts 写文件；GitHub 写成仓库文件（cfnew 的「优选IP来源URL」可直接填它的 raw 地址）；cfnew 直接调它的接口写 KV。'),
 				box,
 				E('div', { 'class': 'cyx-ops' }, [
 					btn('添加目标', 'cbi-button-add', function () {
-						self.cfg.apply_targets = targets.concat([{ name: '新目标', type: 'adguard', domain: '', enabled: false, url: 'http://127.0.0.1:3000', user: '', pass: '', path: '', restart: '', topn: 0 }]);
+						self.cfg.apply_targets = targets.concat([{ name: '新目标', type: 'adguard', domain: '', enabled: false, url: 'http://127.0.0.1:3000', user: '', pass: '', path: '', restart: '', topn: 0, repo: '', branch: '', format: '', token: '', replace: false }]);
 						self.show('apply');
 					}),
 					btn('保存', 'cbi-button-apply', function () { self.saveTargets(); }),
@@ -370,7 +402,7 @@ return view.extend({
 			refs.push({ k: key, el: el, get: get || function (e) { return e.value; } });
 			return el;
 		};
-		var typeSel = bind('type', sel([['adguard', 'AdGuard Home'], ['dnsmasq', 'dnsmasq'], ['hosts', 'hosts 文件']], t.type));
+		var typeSel = bind('type', sel([['adguard', 'AdGuard Home'], ['dnsmasq', 'dnsmasq'], ['hosts', 'hosts 文件'], ['github', 'GitHub 仓库文件'], ['cfnew', 'CFnew（写 KV）']], t.type));
 		var enabled = bind('enabled', E('input', { 'type': 'checkbox', 'checked': t.enabled ? true : null }), function (e) { return !!e.checked; });
 		var nameIn = bind('name', txt(t.name, '例如 图床走 CF'));
 		var box = E('div', { 'class': 'cyx-tgt' }, [
@@ -385,13 +417,18 @@ return view.extend({
 				})
 			]),
 			field('名称', nameIn),
-			field('类型', typeSel, 'dnsmasq：写本地 DNS 改写文件；AdGuard：调 API 改写；hosts：写 hosts 文件'),
+			field('类型', typeSel, 'dnsmasq：写本地 DNS 改写文件；AdGuard：调 API 改写；hosts：写 hosts 文件；github：把结果推到 GitHub 仓库文件；cfnew：调 cfnew 的优选IP接口写 KV'),
 			field('域名', bind('domain', txt(t.domain, '例如 cdn.example.com'))),
-			field('AdGuard 地址', bind('url', txt(t.url, 'http://127.0.0.1:3000'))),
+			field('地址', bind('url', txt(t.url, 'AdGuard：http://127.0.0.1:3000；cfnew：https://cfnew.007.cc.cd')), 'AdGuard Home 与 cfnew 都用这个'),
 			field('AdGuard 用户名', bind('user', txt(t.user, ''))),
 			field('AdGuard 密码', bind('pass', E('input', { 'type': 'password', 'value': t.pass || '' }))),
-			field('写入路径（dnsmasq/hosts）', bind('path', txt(t.path, '默认 /etc/dnsmasq.d/cf-yxip.conf'))),
+			field('路径', bind('path', txt(t.path, 'dnsmasq 默认 /etc/dnsmasq.d/cf-yxip.conf')), 'dnsmasq/hosts 写入路径；github 是仓库里的文件路径（默认 cf-ip.txt）；cfnew 填它的自定义路径或 UUID'),
 			field('下发后重启的服务', bind('restart', txt(t.restart, '例如 dnsmasq，留空不重启'))),
+			field('GitHub 仓库', bind('repo', txt(t.repo, 'owner/name，例如 zknjjjx/cf-ip')), 'github 类型用；文件内容形如 IP:端口#机房-延迟'),
+			field('GitHub 分支', bind('branch', txt(t.branch, '默认 main'))),
+			field('GitHub 格式', bind('format', sel([['cfnew', 'cfnew：IP:端口#名称'], ['cdn', 'cdn：IP:端口#延迟'], ['addr', 'addr：IP:端口'], ['text', 'text：纯 IP']], t.format || 'cfnew'))),
+			field('GitHub 令牌', bind('token', E('input', { 'type': 'password', 'value': t.token || '' })), '留空则用服务环境变量 GH_TOKEN；填了会存在本机 /etc/cf-yxip/config.json'),
+			field('cfnew 先清空旧列表', bind('replace', E('input', { 'type': 'checkbox', 'checked': t.replace ? true : null }), function (e) { return !!e.checked; }), 'cfnew 类型：勾上先删掉 KV 里的旧优选IP再写入'),
 			field('使用前 N 个结果', bind('topn', numIn(t.topn || 0, 1)), '0 表示用全局默认条数')
 		]);
 		this.tgtRefs.push(refs);

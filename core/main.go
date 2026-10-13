@@ -63,6 +63,11 @@ func main() {
 		eng.SetLogSink(func(msg string) {
 			fmt.Fprintln(os.Stderr, time.Now().Format("15:04:05"), msg)
 		})
+		// 记下开始前的快照：扫描没跑出结果时要如实报错，不能把旧结果当成新结果打印。
+		prevTime, prevDur := "", int64(-1)
+		if prev := eng.Latest(); prev != nil {
+			prevTime, prevDur = prev.Time, prev.DurationMS
+		}
 		if err := eng.Start(nil); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -81,6 +86,10 @@ func main() {
 		}
 		snap := eng.Latest()
 		if snap == nil {
+			fmt.Fprintln(os.Stderr, eng.Progress().Message)
+			os.Exit(1)
+		}
+		if snap.Time == prevTime && snap.DurationMS == prevDur {
 			fmt.Fprintln(os.Stderr, eng.Progress().Message)
 			os.Exit(1)
 		}

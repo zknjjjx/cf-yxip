@@ -410,6 +410,16 @@ func (e *Engine) run(ctx context.Context, cfg Config) (*Snapshot, error) {
 		return alive[i].Score > alive[j].Score
 	})
 
+	// 按用户设置的阈值（延迟上下限 / 速度下限 / 丢包上限）过滤
+	beforeFilter := len(alive)
+	alive = FilterResults(alive, cfg)
+	if dropped := beforeFilter - len(alive); dropped > 0 {
+		e.logf("阈值过滤：丢弃 %d 个不达标结果，剩余 %d 个", dropped, len(alive))
+	}
+	if len(alive) == 0 {
+		return nil, fmt.Errorf("结果全部被阈值过滤掉了，请放宽延迟/速度/丢包阈值")
+	}
+
 	snap := &Snapshot{
 		Time:       time.Now().Format("2006-01-02 15:04:05"),
 		DurationMS: time.Since(t0).Milliseconds(),
@@ -434,10 +444,18 @@ func (e *Engine) afterRun(cfg *Config, snap *Snapshot) {
 			if !t.Enabled {
 				continue
 			}
-			if err := ApplyTo(t, snap.Results, cfg.TopN); err != nil {
+			r, err := ApplyToTarget(t, snap.Results, cfg.TopN)
+			if err != nil {
 				e.logf("自动下发 [%s] 失败: %v", t.Name, err)
+				continue
+			}
+			if r.Reload.Message != "" {
+				e.logf("自动下发 [%s] 成功（%s）", t.Name, r.Reload.Message)
 			} else {
 				e.logf("自动下发 [%s] 成功", t.Name)
+			}
+			if r.Checked && r.OK {
+				e.logf("自动下发 [%s] 自检通过：%s", t.Name, r.Message)
 			}
 		}
 	}
