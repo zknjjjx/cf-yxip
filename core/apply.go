@@ -41,6 +41,15 @@ func Export(rs []Result, format string, topN int) (string, error) {
 		for _, r := range sub {
 			fmt.Fprintf(&b, "%s#%s\n", r.Addr, resultName(r))
 		}
+	case "cfscan":
+		// cfscan / edgetunnel 的优选列表格式：IP:端口#机房 速度MB/s 延迟ms
+		for _, r := range sub {
+			if r.SpeedMbps > 0 {
+				fmt.Fprintf(&b, "%s#%s %.2fMB/s %.0fms\n", r.Addr, coloTag(r), r.SpeedMbps, r.AvgMS)
+			} else {
+				fmt.Fprintf(&b, "%s#%s %.0fms\n", r.Addr, coloTag(r), r.AvgMS)
+			}
+		}
 	case "csv":
 		fmt.Fprintln(&b, "ip,port,avg_ms,loss_pct,tls_ms,speed_mbps,colo,score")
 		for _, r := range sub {

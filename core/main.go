@@ -23,7 +23,7 @@ func (o *options) register(fs *flag.FlagSet) {
 	fs.StringVar(&o.cfgPath, "c", o.cfgPath, "配置文件路径")
 	fs.StringVar(&o.stateDir, "d", o.stateDir, "状态目录")
 	fs.StringVar(&o.listen, "listen", "", "监听地址，覆盖配置")
-	fs.StringVar(&o.outFmt, "o", "text", "输出格式: text|addr|cdn|csv|json|ipset|hosts")
+	fs.StringVar(&o.outFmt, "o", "text", "输出格式: text|addr|cdn|cfnew|cfscan|csv|json|ipset|hosts")
 	fs.IntVar(&o.topN, "n", 0, "输出条数，0 表示用配置里的 topn")
 	fs.IntVar(&o.timeout, "t", 0, "整体超时秒数（scan 用），0 表示不限")
 }

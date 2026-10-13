@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	Version           = "0.3.0"
+	Version           = "0.3.1"
 	DefaultConfigPath = "/etc/cf-yxip/config.json"
 	DefaultStateDir   = "/etc/cf-yxip"
 )

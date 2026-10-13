@@ -290,7 +290,7 @@ return view.extend({
 		return run(['results', String(limit)]).then(function (res) {
 			if (res.ok === false) throw new Error(res.error);
 			self.content.innerHTML = '';
-			var fmtSel = sel([['text', 'text：纯 IP'], ['addr', 'addr：IP:端口'], ['cfnew', 'cfnew：IP:端口#机房-延迟'], ['cdn', 'cdn：IP:端口#延迟'], ['csv', 'csv：表格'], ['json', 'json'], ['ipset', 'ipset'], ['hosts', 'hosts']], self.exportFmt || 'csv');
+			var fmtSel = sel([['text', 'text：纯 IP'], ['addr', 'addr：IP:端口'], ['cfnew', 'cfnew：IP:端口#机房-延迟'], ['cfscan', 'cfscan：IP:端口#机房 速度MB/s 延迟ms'], ['cdn', 'cdn：IP:端口#延迟'], ['csv', 'csv：表格'], ['json', 'json'], ['ipset', 'ipset'], ['hosts', 'hosts']], self.exportFmt || 'csv');
 			var nIn = numIn(self.exportN || ((res.results || []).length || 10), 1);
 			var limSel = sel([[10, '10 条'], [20, '20 条'], [50, '50 条'], [100, '100 条'], [200, '200 条']], limit);
 			limSel.addEventListener('change', function () { self.resLimit = parseInt(limSel.value, 10); self.show('results'); });
@@ -426,7 +426,7 @@ return view.extend({
 			field('下发后重启的服务', bind('restart', txt(t.restart, '例如 dnsmasq，留空不重启'))),
 			field('GitHub 仓库', bind('repo', txt(t.repo, 'owner/name，例如 zknjjjx/cf-ip')), 'github 类型用；文件内容形如 IP:端口#机房-延迟'),
 			field('GitHub 分支', bind('branch', txt(t.branch, '默认 main'))),
-			field('GitHub 格式', bind('format', sel([['cfnew', 'cfnew：IP:端口#名称'], ['cdn', 'cdn：IP:端口#延迟'], ['addr', 'addr：IP:端口'], ['text', 'text：纯 IP']], t.format || 'cfnew'))),
+			field('GitHub 格式', bind('format', sel([['cfnew', 'cfnew：IP:端口#名称'], ['cfscan', 'cfscan：IP:端口#机房 速度MB/s 延迟ms'], ['cdn', 'cdn：IP:端口#延迟'], ['addr', 'addr：IP:端口'], ['text', 'text：纯 IP']], t.format || 'cfnew'))),
 			field('GitHub 令牌', bind('token', E('input', { 'type': 'password', 'value': t.token || '' })), '留空则用服务环境变量 GH_TOKEN；填了会存在本机 /etc/cf-yxip/config.json'),
 			field('cfnew 先清空旧列表', bind('replace', E('input', { 'type': 'checkbox', 'checked': t.replace ? true : null }), function (e) { return !!e.checked; }), 'cfnew 类型：勾上先删掉 KV 里的旧优选IP再写入'),
 			field('使用前 N 个结果', bind('topn', numIn(t.topn || 0, 1)), '0 表示用全局默认条数')

@@ -37,11 +37,16 @@ func FilterResults(rs []Result, cfg Config) []Result {
 
 // resultName 生成给 cfnew 之类下游看的节点名，例如 LAX-90ms。
 func resultName(r Result) string {
+	return fmt.Sprintf("%s-%.0fms", coloTag(r), r.AvgMS)
+}
+
+// coloTag 取结果所属机房标签，拿不到时用 CF 兜底。
+func coloTag(r Result) string {
 	colo := strings.TrimSpace(r.Colo)
 	if colo == "" {
 		colo = "CF"
 	}
-	return fmt.Sprintf("%s-%.0fms", colo, r.AvgMS)
+	return colo
 }
 
 func httpDoJSON(client *http.Client, method, url string, body any, headers map[string]string) ([]byte, int, error) {
